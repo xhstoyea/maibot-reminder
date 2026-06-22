@@ -22,6 +22,7 @@ from typing import Any, Awaitable, Callable
 
 from maibot_sdk import MaiBotPlugin, Tool
 from maibot_sdk.config import Field, PluginConfigBase
+from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
 try:
     import tomlkit
@@ -373,7 +374,37 @@ class ReminderPlugin(MaiBotPlugin):
         )
         await self._remove_persisted_reminder(reminder.id)
 
-    @Tool("set_reminder", description="设置一个未来某个时间触发的提醒")
+    @Tool(
+        "set_reminder",
+        description="设置一个未来某个时间触发的提醒",
+        detailed_description=(
+            "调用此工具为指定消息流设置一个秒级精度的提醒。"
+            "到达触发时间后，插件会把提醒内容作为意图提交给 AI，由 AI 决定如何回复，"
+            "插件本身不会直接控制 Bot 发送消息。"
+            "\n\ntrigger_time 必须是带时区的 ISO-8601 格式，例如 2026-06-22T18:00:00+08:00。"
+            "\n\n调用成功会返回 reminder_id，可用于后续取消。"
+        ),
+        parameters=[
+            ToolParameterInfo(
+                name="stream_id",
+                param_type=ToolParamType.STRING,
+                description="目标消息流 ID，例如当前聊天流的标识",
+                required=True,
+            ),
+            ToolParameterInfo(
+                name="trigger_time",
+                param_type=ToolParamType.STRING,
+                description="ISO-8601 格式的未来触发时间，必须带时区，例如 2026-06-22T18:00:00+08:00",
+                required=True,
+            ),
+            ToolParameterInfo(
+                name="message",
+                param_type=ToolParamType.STRING,
+                description="提醒内容，到达触发时间后会作为意图交给 AI，由 AI 决定如何回复",
+                required=True,
+            ),
+        ],
+    )
     async def set_reminder(self, **kwargs: Any) -> dict[str, Any]:
         """LLM 工具：设置提醒。"""
         stream_id = str(kwargs.get("stream_id", "")).strip()
@@ -414,7 +445,19 @@ class ReminderPlugin(MaiBotPlugin):
         logger.info("已设置提醒: stream_id=%s reminder_id=%s", stream_id, reminder_id)
         return {"success": True, "reminder_id": reminder_id}
 
-    @Tool("list_reminders", description="列出指定消息流的所有活跃提醒")
+    @Tool(
+        "list_reminders",
+        description="列出指定消息流的所有活跃提醒",
+        detailed_description="返回指定消息流当前所有未触发的提醒，按触发时间升序排列。",
+        parameters=[
+            ToolParameterInfo(
+                name="stream_id",
+                param_type=ToolParamType.STRING,
+                description="目标消息流 ID",
+                required=True,
+            ),
+        ],
+    )
     async def list_reminders(self, **kwargs: Any) -> dict[str, Any]:
         """LLM 工具：列出提醒。"""
         stream_id = str(kwargs.get("stream_id", "")).strip()
@@ -436,7 +479,19 @@ class ReminderPlugin(MaiBotPlugin):
             ],
         }
 
-    @Tool("cancel_reminder", description="取消一个已设置的提醒")
+    @Tool(
+        "cancel_reminder",
+        description="取消一个已设置的提醒",
+        detailed_description="通过 reminder_id 取消一个已设置但尚未触发的提醒。",
+        parameters=[
+            ToolParameterInfo(
+                name="reminder_id",
+                param_type=ToolParamType.STRING,
+                description="要取消的提醒 ID，即 set_reminder 返回的 reminder_id",
+                required=True,
+            ),
+        ],
+    )
     async def cancel_reminder(self, **kwargs: Any) -> dict[str, Any]:
         """LLM 工具：取消提醒。"""
         reminder_id = str(kwargs.get("reminder_id", "")).strip()
