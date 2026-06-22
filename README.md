@@ -41,8 +41,8 @@ message = "提醒内容"
 设置一个提醒。
 
 参数：
-- `stream_id`（string，必填）：目标消息流 ID。
-- `trigger_time`（string，必填）：ISO-8601 格式触发时间，精确到秒，例如 `2026-06-22T18:00:00+08:00`。
+- `stream_id`（string，可选）：目标消息流 ID；省略时自动使用当前对话的流 ID。
+- `trigger_time`（string，必填）：ISO-8601 格式触发时间，必须带时区且精确到秒，例如 `2026-06-22T18:00:00+08:00`。
 - `message`（string，必填）：提醒内容，到期后会作为意图交给 AI，由 AI 决定如何回复。
 
 返回值：
@@ -54,7 +54,7 @@ message = "提醒内容"
 列出指定消息流的所有活跃提醒。
 
 参数：
-- `stream_id`（string，必填）：目标消息流 ID。
+- `stream_id`（string，可选）：目标消息流 ID；省略时自动使用当前对话的流 ID。
 
 返回值：
 - `{ "success": true, "reminders": [ { "id": "...", "trigger_time": "...", "message": "..." }, ... ] }`
