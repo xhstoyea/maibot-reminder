@@ -1,24 +1,36 @@
 {
   "manifest_version": 2,
-  "id": "com.example.maibot-reminder",
+  "id": "xhstoyea.maibot-reminder",
   "version": "1.0.0",
-  "name": "MaiBot Reminder",
-  "description": "让 MaiBot 能够在指定时间主动发送提醒消息的定时器插件。",
-  "author": "xhstoyea",
+  "name": "MaiBot Reminder | 麦麦提醒器",
+  "description": "让 MaiBot 能够在指定时间主动发送提醒消息的秒级定时器插件。",
+  "author": {
+    "name": "xhstoyea",
+    "url": "https://github.com/xhstoyea"
+  },
   "license": "MIT",
   "urls": {
-    "repository": "https://github.com/xhstoyea/maibot-reminder"
+    "repository": "https://github.com/xhstoyea/maibot-reminder",
+    "homepage": "https://github.com/xhstoyea/maibot-reminder",
+    "documentation": "https://github.com/xhstoyea/maibot-reminder/blob/main/README.md",
+    "issues": "https://github.com/xhstoyea/maibot-reminder/issues"
   },
-  "entry": "plugin.py",
-  "plugin_class": "ReminderPlugin",
-  "host": {
-    "min_version": "2.0.0"
+  "host_application": {
+    "min_version": "1.0.0",
+    "max_version": "1.99.99"
   },
   "sdk": {
     "min_version": "2.0.0",
-    "max_version": "3.0.0"
+    "max_version": "2.99.99"
   },
+  "dependencies": [],
   "capabilities": [
-    "send_message"
-  ]
+    "send.text"
+  ],
+  "i18n": {
+    "default_locale": "zh-CN",
+    "supported_locales": [
+      "zh-CN"
+    ]
+  }
 }
