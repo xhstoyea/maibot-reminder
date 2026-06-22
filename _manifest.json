@@ -1,0 +1,24 @@
+{
+  "manifest_version": 2,
+  "id": "com.example.maibot-reminder",
+  "version": "1.0.0",
+  "name": "MaiBot Reminder",
+  "description": "让 MaiBot 能够在指定时间主动发送提醒消息的定时器插件。",
+  "author": "xhstoyea",
+  "license": "MIT",
+  "urls": {
+    "repository": "https://github.com/xhstoyea/maibot-reminder"
+  },
+  "entry": "plugin.py",
+  "plugin_class": "ReminderPlugin",
+  "host": {
+    "min_version": "2.0.0"
+  },
+  "sdk": {
+    "min_version": "2.0.0",
+    "max_version": "3.0.0"
+  },
+  "capabilities": [
+    "send_message"
+  ]
+}

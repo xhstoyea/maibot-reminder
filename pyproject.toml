@@ -1,0 +1,20 @@
+[project]
+name = "maibot-reminder"
+version = "1.0.0"
+description = "让 MaiBot 能够在指定时间主动发送提醒消息的定时器插件。"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "maibot-plugin-sdk>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+]
+
+[project.urls]
+Repository = "https://github.com/xhstoyea/maibot-reminder"
