@@ -4,6 +4,9 @@
 - set_reminder: 设置提醒
 - list_reminders: 列出当前流的所有提醒
 - cancel_reminder: 取消提醒
+
+提醒到期时不会直接控制 Bot 发消息，而是通过 ``maisaka.proactive.trigger``
+把意图交给 AI，由 AI 自行决定如何回复。
 """
 
 from __future__ import annotations
@@ -14,10 +17,16 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from maibot_sdk import MaiBotPlugin, Tool
 from maibot_sdk.config import Field, PluginConfigBase
+
+try:
+    import tomlkit
+except ImportError:
+    tomlkit = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +37,25 @@ class _PluginSection(PluginConfigBase):
     config_version: str = "1.0.0"
 
 
+class ReminderItemConfig(PluginConfigBase):
+    """单个提醒在配置页面中的结构。"""
+
+    __ui_label__ = "提醒项"
+
+    stream_id: str = Field(default="", description="目标聊天流 ID")
+    trigger_time: str = Field(default="", description="触发时间（ISO-8601，带时区）")
+    message: str = Field(default="", description="提醒内容，到期后作为意图交给 AI")
+
+
 class ReminderConfig(PluginConfigBase):
     """提醒插件配置。"""
 
     plugin: _PluginSection = Field(default_factory=_PluginSection)
     max_reminders_per_stream: int = Field(default=20, ge=1, le=1000)
+    reminders: dict[str, ReminderItemConfig] = Field(
+        default_factory=dict,
+        description="当前已设置的提醒，以 reminder_id 为键，可在插件配置页面查看、编辑和删除",
+    )
 
 
 @dataclass
@@ -211,11 +234,12 @@ class ReminderPlugin(MaiBotPlugin):
         self._scheduler: ReminderScheduler | None = None
 
     async def on_load(self) -> None:
-        """加载插件：初始化存储与调度器。"""
+        """加载插件：初始化存储与调度器，并从配置恢复提醒。"""
         max_per_stream = self.config.max_reminders_per_stream
         self._store = ReminderStore(max_per_stream=max_per_stream)
         self._scheduler = ReminderScheduler(self._store, self._on_reminder_trigger)
         await self._scheduler.start()
+        self._load_reminders_from_config()
 
     async def on_unload(self) -> None:
         """卸载插件：停止调度并清空提醒。"""
@@ -226,13 +250,128 @@ class ReminderPlugin(MaiBotPlugin):
         self._store = None
         self._scheduler = None
 
+    @property
+    def _plugin_dir(self) -> Path:
+        """返回插件目录路径。"""
+        return Path(__file__).parent.resolve()
+
+    @property
+    def _config_path(self) -> Path:
+        """返回插件配置文件路径。"""
+        return self._plugin_dir / "config.toml"
+
+    def _save_reminders_to_disk(self) -> None:
+        """将当前内存中的提醒持久化到 ``config.toml``。
+
+        仅更新 ``reminders`` 字段，保留文件中其它所有内容；
+        当 ``tomlkit`` 不可用或文件不可写时静默跳过。
+        """
+        if tomlkit is None:
+            return
+        config_path = self._config_path
+        try:
+            if config_path.exists():
+                with open(config_path, "r", encoding="utf-8") as f:
+                    doc = tomlkit.load(f)
+            else:
+                doc = tomlkit.document()
+
+            reminders_table = tomlkit.table()
+            for reminder_id, item in self.config.reminders.items():
+                table = tomlkit.table()
+                table["stream_id"] = item.stream_id
+                table["trigger_time"] = item.trigger_time
+                table["message"] = item.message
+                reminders_table.add(reminder_id, table)
+
+            doc["reminders"] = reminders_table
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(config_path, "w", encoding="utf-8") as f:
+                tomlkit.dump(doc, f)
+        except Exception:
+            logger.exception("持久化提醒到 config.toml 失败")
+
+    def _load_reminders_from_config(self) -> None:
+        """从当前配置中恢复提醒并加入调度器。
+
+        会跳过已过期或格式非法的条目；加载前先清空现有调度堆。
+        """
+        if self._store is None or self._scheduler is None:
+            return
+
+        self._store.clear()
+        self._scheduler._heap.clear()
+
+        now = datetime.now(timezone.utc)
+        for reminder_id, item in self.config.reminders.items():
+            try:
+                trigger_time = datetime.fromisoformat(item.trigger_time)
+                if trigger_time.tzinfo is None:
+                    trigger_time = trigger_time.replace(tzinfo=timezone.utc)
+            except Exception:
+                logger.warning("配置文件中的提醒时间格式非法，已跳过: %s", reminder_id)
+                continue
+
+            if trigger_time <= now:
+                logger.info("配置文件中的提醒已过期，跳过: %s", reminder_id)
+                continue
+
+            reminder = Reminder(
+                id=reminder_id,
+                stream_id=item.stream_id,
+                trigger_time=trigger_time,
+                message=item.message,
+            )
+            try:
+                self._store.add(reminder)
+            except ValueError:
+                logger.warning("从配置恢复提醒时超出流上限，跳过: %s", reminder_id)
+                continue
+            self._scheduler.schedule(reminder)
+
+        self._scheduler._wake_event.set()
+
+    async def _append_persisted_reminder(self, reminder: Reminder) -> None:
+        """将新提醒追加到配置并持久化。"""
+        if getattr(self, "_plugin_config_instance", None) is None:
+            return
+        self.config.reminders[reminder.id] = ReminderItemConfig(
+            stream_id=reminder.stream_id,
+            trigger_time=reminder.trigger_time.isoformat(),
+            message=reminder.message,
+        )
+        self._save_reminders_to_disk()
+
+    async def _remove_persisted_reminder(self, reminder_id: str) -> None:
+        """从配置中移除指定提醒并持久化。"""
+        if getattr(self, "_plugin_config_instance", None) is None:
+            return
+        if reminder_id in self.config.reminders:
+            del self.config.reminders[reminder_id]
+            self._save_reminders_to_disk()
+
     async def on_config_update(self, scope: str, config_data: dict[str, Any], version: str) -> None:
-        """处理配置热更新。"""
-        pass
+        """处理配置热更新。
+
+        当用户在插件配置页面修改提醒列表后，Runner 会重新注入配置并调用
+        本方法，此时需要从最新配置重新加载提醒。
+        """
+        if scope == "self" and self._store is not None and self._scheduler is not None:
+            self._load_reminders_from_config()
 
     async def _on_reminder_trigger(self, reminder: Reminder) -> None:
-        """提醒到期时调用，主动向消息流发送文本。"""
-        await self.ctx.send.text(reminder.message, reminder.stream_id)
+        """提醒到期时调用，通过 ``maisaka.proactive.trigger`` 交给 AI 决策。
+
+        插件不直接控制 Bot 发送消息，而是将提醒意图提交给 Maisaka，
+        由 AI 根据当前上下文决定如何回复。
+        """
+        await self.ctx.maisaka.proactive.trigger(
+            stream_id=reminder.stream_id,
+            intent=f"提醒事件：{reminder.message}",
+            reason="定时提醒到期",
+            metadata={"reminder_id": reminder.id},
+        )
+        await self._remove_persisted_reminder(reminder.id)
 
     @Tool("set_reminder", description="设置一个未来某个时间触发的提醒")
     async def set_reminder(self, **kwargs: Any) -> dict[str, Any]:
@@ -271,6 +410,7 @@ class ReminderPlugin(MaiBotPlugin):
             return {"success": False, "error": str(exc)}
 
         self._scheduler.schedule(reminder)
+        await self._append_persisted_reminder(reminder)
         logger.info("已设置提醒: stream_id=%s reminder_id=%s", stream_id, reminder_id)
         return {"success": True, "reminder_id": reminder_id}
 
@@ -306,6 +446,7 @@ class ReminderPlugin(MaiBotPlugin):
             return {"success": False, "error": "插件尚未完成初始化"}
 
         if self._scheduler.unschedule(reminder_id):
+            await self._remove_persisted_reminder(reminder_id)
             logger.info("已取消提醒: reminder_id=%s", reminder_id)
             return {"success": True}
         return {"success": False, "error": f"未找到提醒 {reminder_id}"}

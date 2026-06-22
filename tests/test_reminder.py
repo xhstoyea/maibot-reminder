@@ -99,6 +99,7 @@ class TestSetReminderTool:
     @pytest.fixture
     def plugin(self) -> ReminderPlugin:
         p = ReminderPlugin()
+        p.set_plugin_config({"plugin": {"config_version": "1.0.0"}})
         p._store = ReminderStore()
         p._scheduler = ReminderScheduler(p._store, lambda r: None)
         return p
@@ -164,6 +165,7 @@ class TestListRemindersTool:
     @pytest.fixture
     def plugin(self) -> ReminderPlugin:
         p = ReminderPlugin()
+        p.set_plugin_config({"plugin": {"config_version": "1.0.0"}})
         p._store = ReminderStore()
         p._scheduler = ReminderScheduler(p._store, lambda r: None)
         return p
@@ -199,6 +201,7 @@ class TestCancelReminderTool:
     @pytest.fixture
     def plugin(self) -> ReminderPlugin:
         p = ReminderPlugin()
+        p.set_plugin_config({"plugin": {"config_version": "1.0.0"}})
         p._store = ReminderStore()
         p._scheduler = ReminderScheduler(p._store, lambda r: None)
         return p
@@ -231,6 +234,7 @@ class TestCancelReminderTool:
             triggered.append(reminder)
 
         plugin = ReminderPlugin()
+        plugin.set_plugin_config({"plugin": {"config_version": "1.0.0"}})
         plugin._store = store
         plugin._scheduler = ReminderScheduler(store, callback)
         await plugin._scheduler.start()
@@ -252,12 +256,25 @@ class TestCancelReminderTool:
         assert triggered == []
 
 
-class MockSend:
+class MockMaisakaProactive:
     def __init__(self) -> None:
-        self.text_calls: list[tuple[str, str]] = []
+        self.trigger_calls: list[dict[str, object]] = []
 
-    async def text(self, text: str, stream_id: str, **kwargs: object) -> None:
-        self.text_calls.append((text, stream_id))
+    async def trigger(self, *, stream_id: str, intent: str, reason: str = "", priority: str = "", metadata: dict[str, object] | None = None, **kwargs: object) -> dict[str, object]:
+        self.trigger_calls.append({
+            "stream_id": stream_id,
+            "intent": intent,
+            "reason": reason,
+            "priority": priority,
+            "metadata": metadata or {},
+            **kwargs,
+        })
+        return {"success": True}
+
+
+class MockMaisaka:
+    def __init__(self) -> None:
+        self.proactive = MockMaisakaProactive()
 
 
 class TestLifecycle:
@@ -266,7 +283,7 @@ class TestLifecycle:
         p = ReminderPlugin()
         p.set_plugin_config({"plugin": {"config_version": "1.0.0"}})
         ctx = PluginContext("com.example.maibot-reminder")
-        ctx.send = MockSend()
+        ctx.maisaka = MockMaisaka()
         p._set_context(ctx)
         return p
 
@@ -290,7 +307,7 @@ class TestLifecycle:
         assert plugin._scheduler is None or plugin._scheduler._task is None
 
     @pytest.mark.asyncio
-    async def test_reminder_triggers_send_text(self, plugin: ReminderPlugin) -> None:
+    async def test_reminder_triggers_proactive_task(self, plugin: ReminderPlugin) -> None:
         await plugin.on_load()
         try:
             future = (datetime.now(timezone.utc) + timedelta(seconds=0.1)).isoformat()
@@ -301,12 +318,14 @@ class TestLifecycle:
             )
 
             async with asyncio.timeout(2.0):
-                while len(plugin.ctx.send.text_calls) < 1:
+                while len(plugin.ctx.maisaka.proactive.trigger_calls) < 1:
                     await asyncio.sleep(0.01)
         finally:
             await plugin.on_unload()
 
-        assert len(plugin.ctx.send.text_calls) == 1
-        text, stream_id = plugin.ctx.send.text_calls[0]
-        assert text == "time is up"
-        assert stream_id == "stream_int"
+        assert len(plugin.ctx.maisaka.proactive.trigger_calls) == 1
+        call = plugin.ctx.maisaka.proactive.trigger_calls[0]
+        assert call["stream_id"] == "stream_int"
+        assert "time is up" in str(call["intent"])
+        assert call["reason"] == "定时提醒到期"
+        assert "reminder_id" in call.get("metadata", {})

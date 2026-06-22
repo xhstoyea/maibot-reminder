@@ -23,9 +23,15 @@
     "min_version": "2.0.0",
     "max_version": "2.99.99"
   },
-  "dependencies": [],
+  "dependencies": [
+    {
+      "type": "python_package",
+      "name": "tomlkit",
+      "version_spec": ">=0.12.0"
+    }
+  ],
   "capabilities": [
-    "send.text"
+    "maisaka.proactive.trigger"
   ],
   "i18n": {
     "default_locale": "zh-CN",
